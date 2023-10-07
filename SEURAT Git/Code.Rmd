@@ -1,0 +1,147 @@
+---
+title: "Seurat"
+author: "Parissa Amin"
+date: "2022-10-04"
+output: pdf_document
+---
+
+
+
+# Creating Seurat object   
+
+Loading packages and data to create Seurat object.
+
+```{r}
+library(Seurat) 
+library(Matrix)
+library(ggplot2)
+library(dplyr)
+library (patchwork)
+
+metadata <- read.csv("D:/scRNASeq/Data/metadata.csv", header = TRUE, row.names = 1)
+
+gene_names <- read.table("D:/scRNASeq/Data/genes.tsv", header = FALSE, col.names = 
+                           "GeneName", stringsAsFactors = FALSE)$GeneName
+
+mtx_matrix<-readMM("D:/scRNASeq/Data/matrix.mtx") 
+ 
+rownames(mtx_matrix) <- gene_names
+colnames(mtx_matrix) <- rownames(metadata) 
+seurat_obj <- CreateSeuratObject(counts = Matrix::Matrix(as.matrix(mtx_matrix),sparse = T), meta.data = metadata)
+```
+
+
+#Quality Control
+
+While the data is already processed, we perform a brief quality control.
+
+```{r}
+# Violin Plot
+VlnPlot(object = seurat_obj, features = c('nFeature_RNA','nCount_RNA','pct.Ribo',
+                                         'pct.mito'), group.by = 'orig.ident',pt.size = 0,ncol=1)
+
+
+# FeatureScatter can be used to visualize feature-feature relationships such as number 
+#of genes ("nFeature_RNA") vs number of UMIs ("nCount_RNA") 
+FeatureScatter(seurat_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",group.by = 'orig.ident')
+
+```
+
+
+#Identifying Variable Genes
+
+
+
+```{r}
+seurat_obj <- FindVariableFeatures(seurat_obj, 
+                                   selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(seurat_obj), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(seurat_obj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+plot1 
+
+plot2
+```
+
+
+#Scaling data
+
+My personal PC doesnt run the full scaling  using 
+
+all.genes  <-rownames(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj, features = all.genes)
+
+So I went on with the recommended substitute:
+
+```{r}
+seurat_obj <- ScaleData(seurat_obj)
+```
+
+#Perform linear dimensional reduction
+
+Next we perform PCA on the scaled data. By default, only the previously determined variable features are used as input, but can be defined using features argument if one wishes to choose a different subset.
+
+```{r}
+seurat_obj<-RunPCA(seurat_obj,features =VariableFeatures(object = seurat_obj))
+print(seurat_obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(seurat_obj, dims = 1:3, reduction = "pca", ncol=3)
+DimPlot(seurat_obj, reduction = "pca")
+DimHeatmap(seurat_obj, dims = 1, cells = 50000, balanced = TRUE)
+ElbowPlot(seurat_obj)
+```
+
+
+
+#Find clusters
+
+I have tried different values for dim in seurat_obj <-FindNeighbors(seurat_obj, dims = 1:30) and it significantly alters the results! 
+I continued using dim=1:30
+
+```{r}
+seurat_obj <- FindNeighbors(seurat_obj, dims = 1:30)
+seurat_obj <- FindClusters(seurat_obj, resolution = 0.5)
+head(Idents(seurat_obj), 5)
+```
+
+
+
+#UMAP
+
+```{r}
+seurat_obj <- RunUMAP(seurat_obj, dims = 1:30)
+
+DimPlot(seurat_obj,reduction="umap")
+```
+
+I continued using dim=1:30 here too. 
+
+
+
+#Markers for each cluster
+
+Find markers for every cluster compared to all remaining cells, report only the positive ones
+ 
+```{r}
+seurat_obj.markers <- FindAllMarkers(seurat_obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+seurat_obj.markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 2, order_by = avg_log2FC)
+``` 
+
+
+Saving the markers: 
+
+```{r}
+saveRDS(seurat_obj.markers, file = "seurat_obj.markers.rds")
+```
+
+# Conlusion
+I was able to identify cellular clusters in scRNA seq atlas of breast tumors. For each cluster, the corresponding marker genes were also identified. The question of whether these findings are biologically valid or not remains to be explored. For example, one needs to explore if the clusters identified here are representing a distinct cell type with their corresponding marker genes.
+
+Additionally, I made multiple decisions about values of parameters that have significantly affected the results. As such, the identified clusters might not represent the real structure of the data and existing clusters (cell types) within it.  
+
